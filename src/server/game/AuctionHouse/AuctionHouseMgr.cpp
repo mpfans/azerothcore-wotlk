@@ -218,7 +218,7 @@ void AuctionHouseMgr::SendAuctionSuccessfulMail(AuctionEntry* auction, Character
 
         LOG_INFO("entities.player.auctionhouse", "AuctionHouse: Auction #{} sold: Seller {} (GUID: {}), Buyer: {} (GUID: {}), Item (Entry: {}) x{}, Sale Price: {} copper, Profit: {} copper (cut: {} copper)",
             auction->Id, owner ? owner->GetName() : "offline", auction->owner.GetCounter(),
-            auction->bidder.GetCounter(), auction->item_template, auction->itemCount,
+            gpd->Name, auction->bidder.GetCounter(), auction->item_template, auction->itemCount,
             auction->bid, profit, auction->GetAuctionCut());
 
         if (auction->bid >= 500 * GOLD)
