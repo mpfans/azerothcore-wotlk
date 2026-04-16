@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -21,6 +21,7 @@
 #include "Pet.h"
 #include "Player.h"
 #include "ScriptMgr.h"
+#include "SpellAuraDefines.h"
 #include "SpellAuraEffects.h"
 
 // KillRewarder incapsulates logic of rewarding player upon kill with:
@@ -70,7 +71,7 @@ KillRewarder::KillRewarder(Player* killer, Unit* victim, bool isBattleGround) :
         _isFullXP(false), _maxLevel(0), _isBattleGround(isBattleGround), _isPvP(false)
 {
     // mark the credit as pvp if victim is player
-    if (victim->GetTypeId() == TYPEID_PLAYER)
+    if (victim->IsPlayer())
         _isPvP = true;
         // or if its owned by player and its not a vehicle
     else if (victim->GetCharmerOrOwnerGUID().IsPlayer())
@@ -130,7 +131,7 @@ void KillRewarder::_InitXP(Player* player)
         _xp = Acore::XP::Gain(player, _victim, _isBattleGround);
 
     if (_xp && !_isBattleGround && _victim) // pussywizard: npcs with relatively low hp give lower exp
-        if (_victim->GetTypeId() == TYPEID_UNIT)
+        if (_victim->IsCreature())
             if (const CreatureTemplate* ct = _victim->ToCreature()->GetCreatureTemplate())
                 if (ct->ModHealth <= 0.75f && ct->ModHealth >= 0.0f)
                     _xp = uint32(_xp * ct->ModHealth);
@@ -162,12 +163,10 @@ void KillRewarder::_RewardXP(Player* player, float rate)
     if (xp)
     {
         // 4.2.2. Apply auras modifying rewarded XP (SPELL_AURA_MOD_XP_PCT).
-        Unit::AuraEffectList const& auras = player->GetAuraEffectsByType(SPELL_AURA_MOD_XP_PCT);
-        for (Unit::AuraEffectList::const_iterator i = auras.begin(); i != auras.end(); ++i)
-            AddPct(xp, (*i)->GetAmount());
+        xp *= player->GetTotalAuraMultiplier(SPELL_AURA_MOD_XP_PCT);
 
         // 4.2.3. Give XP to player.
-        sScriptMgr->OnGivePlayerXP(player, xp, _victim, PlayerXPSource::XPSOURCE_KILL);
+        sScriptMgr->OnPlayerGiveXP(player, xp, _victim, PlayerXPSource::XPSOURCE_KILL);
         player->GiveXP(xp, _victim, _groupRate);
         if (Pet* pet = player->GetPet())
             // 4.2.4. If player has pet, reward pet with XP (100% for single player, 50% for group case).
@@ -201,7 +200,7 @@ void KillRewarder::_RewardPlayer(Player* player, bool isDungeon)
         // 4.1. Give honor (player must be alive and not on BG).
         _RewardHonor(player);
         // 4.1.1 Send player killcredit for quests with PlayerSlain
-        if (_victim->GetTypeId() == TYPEID_PLAYER)
+        if (_victim->IsPlayer())
             player->KilledPlayerCredit();
     }
 
@@ -210,7 +209,7 @@ void KillRewarder::_RewardPlayer(Player* player, bool isDungeon)
     if (!_isPvP || _isBattleGround)
     {
         float xpRate = _group ? _groupRate * float(player->GetLevel()) / _aliveSumLevel : /*Personal rate is 100%.*/ 1.0f; // Group rate depends on the sum of levels.
-        sScriptMgr->OnRewardKillRewarder(player, this, isDungeon, xpRate);                                              // Personal rate is 100%.
+        sScriptMgr->OnPlayerRewardKillRewarder(player, this, isDungeon, xpRate);                                              // Personal rate is 100%.
 
         if (_xp)
         {
@@ -256,7 +255,7 @@ void KillRewarder::_RewardGroup()
                     {
                         _RewardPlayer(member, isDungeon);
                         // Xinef: only count players
-                        //if (_victim->GetTypeId() == TYPEID_PLAYER)
+                        //if (_victim->IsPlayer())
                         //    member->UpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_SPECIAL_PVP_KILL, 1, 0, _victim);
                     }
                 }

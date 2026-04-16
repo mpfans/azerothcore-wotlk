@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -20,7 +20,6 @@
 #include "CellImpl.h"
 #include "CreatureAISelector.h"
 #include "DisableMgr.h"
-#include "DynamicTree.h"
 #include "GameObjectAI.h"
 #include "GameObjectModel.h"
 #include "GameTime.h"
@@ -39,7 +38,23 @@
 #include <G3D/CoordinateFrame.h>
 #include <G3D/Quat.h>
 
-GameObject::GameObject() : WorldObject(false), MovableMapObject(),
+bool QuaternionData::IsUnit() const
+{
+    return fabs(x * x + y * y + z * z + w * w - 1.0f) < 1e-5f;
+}
+
+void QuaternionData::ToEulerAnglesZYX(float& Z, float& Y, float& X) const
+{
+    G3D::Matrix3(G3D::Quat(x, y, z, w)).toEulerAnglesZYX(Z, Y, X);
+}
+
+QuaternionData QuaternionData::FromEulerAnglesZYX(float Z, float Y, float X)
+{
+    G3D::Quat quat(G3D::Matrix3::fromEulerAnglesZYX(Z, Y, X));
+    return QuaternionData(quat.x, quat.y, quat.z, quat.w);
+}
+
+GameObject::GameObject() : WorldObject(), MovableMapObject(),
     m_model(nullptr), m_goValue(), m_AI(nullptr)
 {
     m_objectType |= TYPEMASK_GAMEOBJECT;
@@ -204,6 +219,10 @@ void GameObject::CheckRitualList()
     if (m_unique_users.empty())
         return;
 
+    uint32 animSpell = GetGOInfo()->summoningRitual.animSpell;
+    if (!animSpell)
+        animSpell = GetSpellId();
+
     for (GuidSet::iterator itr = m_unique_users.begin(); itr != m_unique_users.end();)
     {
         if (*itr == GetOwnerGUID())
@@ -215,7 +234,7 @@ void GameObject::CheckRitualList()
         bool erase = true;
         if (Player* channeler = ObjectAccessor::GetPlayer(*this, *itr))
             if (Spell* spell = channeler->GetCurrentSpell(CURRENT_CHANNELED_SPELL))
-                if (spell->m_spellInfo->Id == GetGOInfo()->summoningRitual.animSpell)
+                if (spell->m_spellInfo->Id == animSpell)
                     erase = false;
 
         if (erase)
@@ -227,9 +246,12 @@ void GameObject::CheckRitualList()
 
 void GameObject::ClearRitualList()
 {
-    uint32 animSpell = GetGOInfo()->summoningRitual.animSpell;
-    if (!animSpell || m_unique_users.empty())
+    if (m_unique_users.empty())
         return;
+
+    uint32 animSpell = GetGOInfo()->summoningRitual.animSpell;
+    if (!animSpell)
+        animSpell = GetSpellId();
 
     for (ObjectGuid const& guid : m_unique_users)
     {
@@ -287,35 +309,14 @@ bool GameObject::Create(ObjectGuid::LowType guidlow, uint32 name_id, Map* map, u
         return false;
     }
 
-    GameObjectAddon const* addon = sObjectMgr->GetGameObjectAddon(GetSpawnId());
+    SetWorldRotation(rotation);
 
-    // hackfix for the hackfix down below
-    switch (goinfo->entry)
-    {
-        // excluded ids from the hackfix below
-        // used switch since there should be more
-        case 181233: // maexxna portal effect
-        case 181575: // maexxna portal
-        case 20992: // theramore black shield
-        case 21042: // theramore guard badge
-            SetLocalRotation(rotation);
-            break;
-        default:
-            // xinef: hackfix - but make it possible to use original WorldRotation (using special gameobject addon data)
-            // pussywizard: temporarily calculate WorldRotation from orientation, do so until values in db are correct
-            if (addon && addon->invisibilityType == INVISIBILITY_GENERAL && addon->InvisibilityValue == 0)
-            {
-                SetLocalRotation(rotation);
-            }
-            else
-            {
-                SetLocalRotationAngles(NormalizeOrientation(GetOrientation()), 0.0f, 0.0f);
-            }
-            break;
-    }
+    GameObjectAddon const* gameObjectAddon = sObjectMgr->GetGameObjectAddon(GetSpawnId());
+    QuaternionData parentRotation;
+    if (gameObjectAddon)
+        parentRotation = gameObjectAddon->ParentRotation;
 
-    // pussywizard: no PathRotation for normal gameobjects
-    SetTransportPathRotation(0.0f, 0.0f, 0.0f, 1.0f);
+    SetTransportPathRotation(parentRotation.x, parentRotation.y, parentRotation.z, parentRotation.w);
 
     SetObjectScale(goinfo->size);
 
@@ -397,12 +398,12 @@ bool GameObject::Create(ObjectGuid::LowType guidlow, uint32 name_id, Map* map, u
             break;
     }
 
-    if (addon)
+    if (gameObjectAddon)
     {
-        if (addon->InvisibilityValue)
+        if (gameObjectAddon->InvisibilityValue)
         {
-            m_invisibility.AddFlag(addon->invisibilityType);
-            m_invisibility.AddValue(addon->invisibilityType, addon->InvisibilityValue);
+            m_invisibility.AddFlag(gameObjectAddon->invisibilityType);
+            m_invisibility.AddValue(gameObjectAddon->invisibilityType, gameObjectAddon->InvisibilityValue);
         }
     }
 
@@ -425,21 +426,19 @@ bool GameObject::Create(ObjectGuid::LowType guidlow, uint32 name_id, Map* map, u
 
     // Check if GameObject is Large
     if (goinfo->IsLargeGameObject())
-    {
         SetVisibilityDistanceOverride(VisibilityDistanceType::Large);
-    }
 
     // Check if GameObject is Infinite
     if (goinfo->IsInfiniteGameObject())
-    {
         SetVisibilityDistanceOverride(VisibilityDistanceType::Infinite);
-    }
 
     return true;
 }
 
 void GameObject::Update(uint32 diff)
 {
+    WorldObject::Update(diff);
+
     if (AI())
         AI()->UpdateAI(diff);
     else if (!AIM_Initialize())
@@ -504,7 +503,7 @@ void GameObject::Update(uint32 diff)
                             {
                                 // splash bobber (bobber ready now)
                                 Unit* caster = GetOwner();
-                                if (caster && caster->GetTypeId() == TYPEID_PLAYER)
+                                if (caster && caster->IsPlayer())
                                 {
                                     SetGoState(GO_STATE_ACTIVE);
                                     ReplaceAllGameObjectFlags(GO_FLAG_NODESPAWN);
@@ -513,7 +512,7 @@ void GameObject::Update(uint32 diff)
                                     WorldPacket packet;
                                     BuildValuesUpdateBlockForPlayer(&udata, caster->ToPlayer());
                                     udata.BuildPacket(packet);
-                                    caster->ToPlayer()->GetSession()->SendPacket(&packet);
+                                    caster->ToPlayer()->SendDirectMessage(&packet);
 
                                     SendCustomAnim(GetGoAnimProgress());
                                 }
@@ -527,18 +526,15 @@ void GameObject::Update(uint32 diff)
                             if (GameTime::GetGameTimeMS().count() < m_cooldownTime)
                                 return;
                             GameObjectTemplate const* info = GetGOInfo();
-                            if (info->summoningRitual.animSpell)
-                            {
-                                // xinef: if ritual requires animation, ensure that all users performs channel
-                                CheckRitualList();
-                            }
+
+                            CheckRitualList();
+
                             if (GetUniqueUseCount() < info->summoningRitual.reqParticipants)
                             {
                                 SetLootState(GO_READY);
                                 return;
                             }
 
-                            bool triggered = info->summoningRitual.animSpell;
                             Unit* owner = GetOwner();
                             Unit* spellCaster = owner ? owner : ObjectAccessor::GetPlayer(*this, m_ritualOwnerGUID);
                             if (!spellCaster)
@@ -554,7 +550,6 @@ void GameObject::Update(uint32 diff)
                                 // spell have reagent and mana cost but it not expected use its
                                 // it triggered spell in fact casted at currently channeled GO
                                 spellId = 61993;
-                                triggered = true;
                             }
 
                             // Cast casterTargetSpell at a random GO user
@@ -584,7 +579,7 @@ void GameObject::Update(uint32 diff)
                                 SetLootState(GO_READY);
 
                             ClearRitualList();
-                            spellCaster->CastSpell(spellCaster, spellId, triggered);
+                            spellCaster->CastSpell(spellCaster, spellId, true);
                             return;
                         }
                     case GAMEOBJECT_TYPE_CHEST:
@@ -632,12 +627,12 @@ void GameObject::Update(uint32 diff)
                             case GAMEOBJECT_TYPE_FISHINGNODE:   //  can't fish now
                                 {
                                     Unit* caster = GetOwner();
-                                    if (caster && caster->GetTypeId() == TYPEID_PLAYER)
+                                    if (caster && caster->IsPlayer())
                                     {
                                         caster->ToPlayer()->RemoveGameObject(this, false);
 
                                         WorldPacket data(SMSG_FISH_ESCAPED, 0);
-                                        caster->ToPlayer()->GetSession()->SendPacket(&data);
+                                        caster->ToPlayer()->SendDirectMessage(&data);
                                     }
                                     // can be delete
                                     m_lootState = GO_JUST_DEACTIVATED;
@@ -717,7 +712,7 @@ void GameObject::Update(uint32 diff)
                         {
                             Acore::NearestAttackableNoTotemUnitInObjectRangeCheck checker(this, owner, radius);
                             Acore::UnitSearcher<Acore::NearestAttackableNoTotemUnitInObjectRangeCheck> searcher(this, target, checker);
-                            Cell::VisitAllObjects(this, searcher, radius);
+                            Cell::VisitObjects(this, searcher, radius);
                         }
                         else                                        // environmental trap
                         {
@@ -726,7 +721,7 @@ void GameObject::Update(uint32 diff)
                             Player* player = nullptr;
                             Acore::AnyPlayerInObjectRangeCheck checker(this, radius, true, true);
                             Acore::PlayerSearcher<Acore::AnyPlayerInObjectRangeCheck> searcher(this, player, checker);
-                            Cell::VisitWorldObjects(this, searcher, radius);
+                            Cell::VisitObjects(this, searcher, radius);
                             target = player;
                         }
 
@@ -889,17 +884,18 @@ void GameObject::Update(uint32 diff)
                 if (!m_spawnedByDefault)
                 {
                     m_respawnTime = 0;
-                    DestroyForNearbyPlayers(); // xinef: old UpdateObjectVisibility();
+                    DestroyForVisiblePlayers(); // xinef: old UpdateObjectVisibility();
                     return;
                 }
 
-                m_respawnTime = GameTime::GetGameTime().count() + m_respawnDelayTime;
+                uint32 dynamicRespawnDelay = GetMap()->ApplyDynamicModeRespawnScaling(this, m_respawnDelayTime);
+                m_respawnTime = GameTime::GetGameTime().count() + dynamicRespawnDelay;
 
                 // if option not set then object will be saved at grid unload
                 if (GetMap()->IsDungeon())
                     SaveRespawnTime();
 
-                DestroyForNearbyPlayers(); // xinef: old UpdateObjectVisibility();
+                DestroyForVisiblePlayers(); // xinef: old UpdateObjectVisibility();
                 break;
             }
     }
@@ -928,7 +924,7 @@ void GameObject::AddUniqueUse(Player* player)
     m_unique_users.insert(player->GetGUID());
 }
 
-void GameObject::DespawnOrUnsummon(Milliseconds delay, Seconds forceRespawnTime)
+void GameObject::DespawnOrUnsummon(Milliseconds delay /*= 0ms*/, Seconds forceRespawnTime /*= 0s*/)
 {
     if (delay > 0ms)
     {
@@ -997,43 +993,25 @@ void GameObject::Delete()
         AddObjectToRemoveList();
 }
 
-void GameObject::GetFishLoot(Loot* fishloot, Player* loot_owner)
+void GameObject::GetFishLoot(Loot* fishLoot, Player* lootOwner, bool junk /*= false*/)
 {
-    fishloot->clear();
+    fishLoot->clear();
 
-    uint32 zone, subzone;
-    uint32 defaultzone = 1;
-    GetZoneAndAreaId(zone, subzone);
+    uint32 zone, area;
+    uint32 defaultZone = 1;
+    GetZoneAndAreaId(zone, area);
 
-    // if subzone loot exist use it
-    fishloot->FillLoot(subzone, LootTemplates_Fishing, loot_owner, true, true);
-    if (fishloot->empty())  //use this becase if zone or subzone has set LOOT_MODE_JUNK_FISH,Even if no normal drop, fishloot->FillLoot return true. it wrong.
+    uint16 lootMode = junk ? LOOT_MODE_JUNK_FISH : LOOT_MODE_DEFAULT;
+    // Check to fill loot in the order area - zone - defaultZone.
+    // This is because area and zone is not set in some places, like Off the coast of Storm Peaks.
+    uint32 lootZones[] = { area, zone, defaultZone };
+    for (uint32 fillZone : lootZones)
     {
-        //subzone no result,use zone loot
-        fishloot->FillLoot(zone, LootTemplates_Fishing, loot_owner, true, true);
-        //use zone 1 as default, somewhere fishing got nothing,becase subzone and zone not set, like Off the coast of Storm Peaks.
-        if (fishloot->empty())
-            fishloot->FillLoot(defaultzone, LootTemplates_Fishing, loot_owner, true, true);
-    }
-}
+        fishLoot->FillLoot(fillZone, LootTemplates_Fishing, lootOwner, true, true, lootMode);
 
-void GameObject::GetFishLootJunk(Loot* fishloot, Player* loot_owner)
-{
-    fishloot->clear();
-
-    uint32 zone, subzone;
-    uint32 defaultzone = 1;
-    GetZoneAndAreaId(zone, subzone);
-
-    // if subzone loot exist use it
-    fishloot->FillLoot(subzone, LootTemplates_Fishing, loot_owner, true, true, LOOT_MODE_JUNK_FISH);
-    if (fishloot->empty())  //use this becase if zone or subzone has normal mask drop, then fishloot->FillLoot return true.
-    {
-        //use zone loot
-        fishloot->FillLoot(zone, LootTemplates_Fishing, loot_owner, true, true, LOOT_MODE_JUNK_FISH);
-        if (fishloot->empty())
-            //use zone 1 as default
-            fishloot->FillLoot(defaultzone, LootTemplates_Fishing, loot_owner, true, true, LOOT_MODE_JUNK_FISH);
+        // If the loot is filled and the loot is eligible, then we break out of the loop.
+        if (!fishLoot->empty() && !fishLoot->isLooted())
+            break;
     }
 }
 
@@ -1071,7 +1049,7 @@ void GameObject::SaveToDB(uint32 mapid, uint8 spawnMask, uint32 phaseMask, bool 
     data.posY = GetPositionY();
     data.posZ = GetPositionZ();
     data.orientation = GetOrientation();
-    data.rotation = m_localRotation;
+    data.rotation = WorldRotation;
     data.spawntimesecs = m_spawnedByDefault ? m_respawnDelayTime : -(int32)m_respawnDelayTime;
     data.animprogress = GetGoAnimProgress();
     data.go_state = GetGoState();
@@ -1097,10 +1075,10 @@ void GameObject::SaveToDB(uint32 mapid, uint8 spawnMask, uint32 phaseMask, bool 
     stmt->SetData(index++, GetPositionY());
     stmt->SetData(index++, GetPositionZ());
     stmt->SetData(index++, GetOrientation());
-    stmt->SetData(index++, m_localRotation.x);
-    stmt->SetData(index++, m_localRotation.y);
-    stmt->SetData(index++, m_localRotation.z);
-    stmt->SetData(index++, m_localRotation.w);
+    stmt->SetData(index++, WorldRotation.x);
+    stmt->SetData(index++, WorldRotation.y);
+    stmt->SetData(index++, WorldRotation.z);
+    stmt->SetData(index++, WorldRotation.w);
     stmt->SetData(index++, int32(m_respawnDelayTime));
     stmt->SetData(index++, GetGoAnimProgress());
     stmt->SetData(index++, uint8(GetGoState()));
@@ -1142,6 +1120,11 @@ bool GameObject::LoadGameObjectFromDB(ObjectGuid::LowType spawnId, Map* map, boo
 
     m_goData = data;
     m_spawnId = spawnId;
+
+    // Set respawn compatibility mode based on spawn group flags
+    SpawnGroupTemplateData const* groupData = sObjectMgr->GetSpawnGroupData(data->spawnGroupId);
+    _respawnCompatibilityMode = sWorld->getBoolConfig(CONFIG_RESPAWN_FORCE_COMPATIBILITY_MODE)
+        || !groupData || (groupData->flags & SPAWNGROUP_FLAG_COMPATIBILITY_MODE);
 
     if (!Create(map->GenerateLowGuid<HighGuid::GameObject>(), entry, map, phaseMask, x, y, z, ang, data->rotation, animprogress, go_state, artKit))
         return false;
@@ -1278,7 +1261,7 @@ bool GameObject::IsAlwaysVisibleFor(WorldObject const* seer) const
         Unit* owner = GetOwner();
         if (owner)
         {
-            if (seer->isType(TYPEMASK_UNIT) && owner->IsFriendlyTo(seer->ToUnit()))
+            if (seer->IsUnit() && owner->IsFriendlyTo(seer->ToUnit()))
                 return true;
         }
     }
@@ -1410,7 +1393,7 @@ GameObject* GameObject::LookupFishingHoleAround(float range)
     Acore::NearestGameObjectFishingHole u_check(*this, range);
     Acore::GameObjectSearcher<Acore::NearestGameObjectFishingHole> checker(this, ok, u_check);
 
-    Cell::VisitGridObjects(this, checker, range);
+    Cell::VisitObjects(this, checker, range);
     return ok;
 }
 
@@ -1483,7 +1466,7 @@ void GameObject::Use(Unit* user)
     // by default spell caster is user
     Unit* spellCaster = user;
     uint32 spellId = 0;
-    bool triggered = false;
+    uint32 triggeredFlags = TRIGGERED_NONE;
 
     if (Player* playerUser = user->ToPlayer())
     {
@@ -1503,6 +1486,10 @@ void GameObject::Use(Unit* user)
         m_cooldownTime = GameTime::GetGameTimeMS().count() + cooldown * IN_MILLISECONDS;
     }
 
+    if (user->IsPlayer() && GetGoType() != GAMEOBJECT_TYPE_TRAP) // workaround for GO casting
+        if (!m_goInfo->IsUsableMounted())
+            user->RemoveAurasByType(SPELL_AURA_MOUNTED);
+
     switch (GetGoType())
     {
         case GAMEOBJECT_TYPE_DOOR:                          //0
@@ -1519,7 +1506,7 @@ void GameObject::Use(Unit* user)
             return;
         case GAMEOBJECT_TYPE_QUESTGIVER:                    //2
             {
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
@@ -1548,7 +1535,7 @@ void GameObject::Use(Unit* user)
                 if (!info)
                     return;
 
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 if (ChairListSlots.empty())        // this is called once at first chair use to make list of available slots
@@ -1633,7 +1620,7 @@ void GameObject::Use(Unit* user)
                 if (HasGameObjectFlag(GO_FLAG_IN_USE))
                     return;
 
-                if (user->GetTypeId() == TYPEID_PLAYER)
+                if (user->IsPlayer())
                 {
                     Player* player = user->ToPlayer();
 
@@ -1641,7 +1628,7 @@ void GameObject::Use(Unit* user)
                     {
                         WorldPacket data(SMSG_GAMEOBJECT_PAGETEXT, 8);
                         data << GetGUID();
-                        player->GetSession()->SendPacket(&data);
+                        player->SendDirectMessage(&data);
                     }
                     else if (info->goober.gossipID)
                     {
@@ -1715,13 +1702,13 @@ void GameObject::Use(Unit* user)
                 if (!info)
                     return;
 
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
 
                 if (info->camera.cinematicId)
-                    player->SendCinematicStart(info->camera.cinematicId);
+                    player->GetCinematicMgr().StartCinematic(info->camera.cinematicId);
 
                 if (info->camera.eventID)
                 {
@@ -1748,34 +1735,40 @@ void GameObject::Use(Unit* user)
                             uint32 zone, subzone;
                             GetZoneAndAreaId(zone, subzone);
 
-                            int32 zone_skill = sObjectMgr->GetFishingBaseSkillLevel(subzone);
-                            if (!zone_skill)
-                                zone_skill = sObjectMgr->GetFishingBaseSkillLevel(zone);
+                            int32 zoneSkill = sObjectMgr->GetFishingBaseSkillLevel(subzone);
+                            if (!zoneSkill)
+                                zoneSkill = sObjectMgr->GetFishingBaseSkillLevel(zone);
 
                             //provide error, no fishable zone or area should be 0
-                            if (!zone_skill)
+                            if (!zoneSkill)
                                 LOG_ERROR("sql.sql", "Fishable areaId {} are not properly defined in `skill_fishing_base_level`.", subzone);
 
-                            int32 skill = player->GetSkillValue(SKILL_FISHING);
+                            // no miss skill is zone skill + 95 since at least patch 2.1
+                            int32 const noMissSkill = zoneSkill + 95;
+
+                            int32 const skill = player->GetSkillValue(SKILL_FISHING);
 
                             int32 chance;
-                            if (skill < zone_skill)
+                            // fishing pool catches are 100%
+                            //TODO: find reasonable value for fishing hole search
+                            GameObject* fishingHole = LookupFishingHoleAround(20.0f + CONTACT_DISTANCE);
+                            if (fishingHole)
+                                chance = 100;
+                            else if (skill < noMissSkill)
                             {
-                                chance = int32(pow((double)skill / zone_skill, 2) * 100);
+                                chance = int32(pow((double)skill / noMissSkill, 2) * 100);
                                 if (chance < 1)
                                     chance = 1;
                             }
                             else
                                 chance = 100;
 
-                            int32 roll = irand(1, 100);
+                            int32 const roll = irand(1, 100);
 
-                            LOG_DEBUG("entities.gameobject", "Fishing check (skill: {} zone min skill: {} chance {} roll: {}", skill, zone_skill, chance, roll);
+                            LOG_DEBUG("entities.gameobject", "Fishing check (skill: {} zone min skill: {} no-miss skill: {} chance {} roll: {})", skill, zoneSkill, noMissSkill, chance, roll);
 
-                            if (sScriptMgr->OnUpdateFishingSkill(player, skill, zone_skill, chance, roll))
-                            {
+                            if (sScriptMgr->OnPlayerUpdateFishingSkill(player, skill, zoneSkill, chance, roll))
                                 player->UpdateFishingSkill();
-                            }
                             // but you will likely cause junk in areas that require a high fishing skill (not yet implemented)
                             if (chance >= roll)
                             {
@@ -1785,11 +1778,10 @@ void GameObject::Use(Unit* user)
                                 SetOwnerGUID(player->GetGUID());
                                 SetSpellId(0); // prevent removing unintended auras at Unit::RemoveGameObject
 
-                                //TODO: find reasonable value for fishing hole search
-                                GameObject* ok = LookupFishingHoleAround(20.0f + CONTACT_DISTANCE);
-                                if (ok)
+                                // fishing pool catch
+                                if (fishingHole)
                                 {
-                                    ok->Use(player);
+                                    fishingHole->Use(player);
                                     SetLootState(GO_JUST_DEACTIVATED);
                                 }
                                 else
@@ -1806,7 +1798,7 @@ void GameObject::Use(Unit* user)
                             SetLootState(GO_JUST_DEACTIVATED);
 
                             WorldPacket data(SMSG_FISH_NOT_HOOKED, 0);
-                            player->GetSession()->SendPacket(&data);
+                            player->SendDirectMessage(&data);
                             break;
                         }
                 }
@@ -1816,7 +1808,7 @@ void GameObject::Use(Unit* user)
 
         case GAMEOBJECT_TYPE_SUMMONING_RITUAL:              //18
             {
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
@@ -1829,7 +1821,7 @@ void GameObject::Use(Unit* user)
 
                 if (owner)
                 {
-                    if (owner->GetTypeId() != TYPEID_PLAYER)
+                    if (!owner->IsPlayer())
                         return;
 
                     // accept only use by player from same group as owner, excluding owner itself (unique use already added in spell effect)
@@ -1849,17 +1841,18 @@ void GameObject::Use(Unit* user)
                         return;
                 }
 
+                CheckRitualList();
+
+                if (GetUniqueUseCount() == info->summoningRitual.reqParticipants)
+                    return;
+
                 if (info->summoningRitual.animSpell)
-                {
-                    // xinef: if ritual requires animation, ensure that all users performs channel
-                    CheckRitualList();
-
-                    // xinef: all participants found
-                    if (GetUniqueUseCount() == info->summoningRitual.reqParticipants)
-                        return;
-
                     player->CastSpell(player, info->summoningRitual.animSpell, true);
-                }
+                else
+                    player->CastSpell(player, GetSpellId(),
+                        TriggerCastFlags(TRIGGERED_IGNORE_EFFECTS
+                                       | TRIGGERED_IGNORE_POWER_AND_REAGENT_COST
+                                       | TRIGGERED_CAST_DIRECTLY));
 
                 AddUniqueUse(player);
 
@@ -1867,11 +1860,9 @@ void GameObject::Use(Unit* user)
                 if (GetUniqueUseCount() == info->summoningRitual.reqParticipants)
                 {
                     SetLootState(GO_NOT_READY);
-                    // can be deleted now, if
-                    if (!info->summoningRitual.animSpell)
-                        m_cooldownTime = 0;
-                    else // channel ready, maintain this
-                        m_cooldownTime = GameTime::GetGameTimeMS().count() + 5 * IN_MILLISECONDS;
+
+                    // channel ready, maintain this
+                    m_cooldownTime = GameTime::GetGameTimeMS().count() + 5 * IN_MILLISECONDS;
                 }
 
                 return;
@@ -1884,30 +1875,37 @@ void GameObject::Use(Unit* user)
 
                 if (info->spellcaster.partyOnly)
                 {
-                    Player const* caster = ObjectAccessor::FindConnectedPlayer(GetOwnerGUID());
-                    if (!caster || user->GetTypeId() != TYPEID_PLAYER || !user->ToPlayer()->IsInSameRaidWith(caster))
+                    if (!user->IsPlayer())
                         return;
+                    if (ObjectGuid ownerGuid = GetOwnerGUID())
+                    {
+                        if (user->GetGUID() != ownerGuid)
+                        {
+                            Group* group = user->ToPlayer()->GetGroup();
+                            if (!group)
+                                return;
+                            if (!group->IsMember(ownerGuid))
+                                return;
+                        }
+                    }
                 }
 
-                user->RemoveAurasByType(SPELL_AURA_MOUNTED);
                 spellId = info->spellcaster.spellId;
-
-                AddUse();
                 break;
             }
         case GAMEOBJECT_TYPE_MEETINGSTONE:                  //23
             {
                 GameObjectTemplate const* info = GetGOInfo();
 
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
 
                 Player* targetPlayer = ObjectAccessor::FindPlayer(player->GetTarget());
 
-                // accept only use by player from same raid as caster, except caster itself
-                if (!targetPlayer || targetPlayer == player || !targetPlayer->IsInSameRaidWith(player))
+                // accept only use by player from same raid as caster
+                if (!targetPlayer || !targetPlayer->IsInSameRaidWith(player))
                     return;
 
                 //required lvl checks!
@@ -1918,17 +1916,14 @@ void GameObject::Use(Unit* user)
                 if (level < info->meetingstone.minLevel)
                     return;
 
-                if (info->entry == 194097)
-                    spellId = 61994;                            // Ritual of Summoning
-                else
-                    spellId = 59782;                            // Summoning Stone Effect
+                spellId = 23598;                            // Meeting Stone Summon
 
                 break;
             }
 
         case GAMEOBJECT_TYPE_FLAGSTAND:                     // 24
             {
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
@@ -1960,7 +1955,7 @@ void GameObject::Use(Unit* user)
 
         case GAMEOBJECT_TYPE_FISHINGHOLE:                   // 25
             {
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
@@ -1972,7 +1967,7 @@ void GameObject::Use(Unit* user)
 
         case GAMEOBJECT_TYPE_FLAGDROP:                      // 26
             {
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
@@ -2030,7 +2025,7 @@ void GameObject::Use(Unit* user)
                 if (!info)
                     return;
 
-                if (user->GetTypeId() != TYPEID_PLAYER)
+                if (!user->IsPlayer())
                     return;
 
                 Player* player = user->ToPlayer();
@@ -2039,7 +2034,7 @@ void GameObject::Use(Unit* user)
                 player->TeleportTo(GetMapId(), GetPositionX(), GetPositionY(), GetPositionZ(), GetOrientation(), TELE_TO_NOT_LEAVE_TRANSPORT | TELE_TO_NOT_LEAVE_COMBAT | TELE_TO_NOT_UNSUMMON_PET);
 
                 WorldPacket data(SMSG_ENABLE_BARBER_SHOP, 0);
-                player->GetSession()->SendPacket(&data);
+                player->SendDirectMessage(&data);
 
                 player->SetStandState(UNIT_STAND_STATE_SIT_LOW_CHAIR + info->barberChair.chairheight);
                 return;
@@ -2057,18 +2052,24 @@ void GameObject::Use(Unit* user)
     SpellInfo const* spellInfo = sSpellMgr->GetSpellInfo(spellId);
     if (!spellInfo)
     {
-        if (user->GetTypeId() != TYPEID_PLAYER || !sOutdoorPvPMgr->HandleCustomSpell(user->ToPlayer(), spellId, this))
+        if (!user->IsPlayer() || !sOutdoorPvPMgr->HandleCustomSpell(user->ToPlayer(), spellId, this))
             LOG_ERROR("entities.gameobject", "WORLD: unknown spell id {} at use action for gameobject (Entry: {} GoType: {})", spellId, GetEntry(), GetGoType());
         else
             LOG_DEBUG("outdoorpvp", "WORLD: {} non-dbc spell was handled by OutdoorPvP", spellId);
         return;
     }
 
+    if (m_goInfo->IsUsableMounted())
+        triggeredFlags |= TRIGGERED_IGNORE_CASTER_MOUNTED_OR_ON_VEHICLE;
+
     if (Player* player = user->ToPlayer())
         sOutdoorPvPMgr->HandleCustomSpell(player, spellId, this);
 
     if (spellCaster)
-        spellCaster->CastSpell(user, spellInfo, triggered);
+    {
+        if ((spellCaster->CastSpell(user, spellInfo, TriggerCastFlags(triggeredFlags)) == SPELL_CAST_OK) && GetGoType() == GAMEOBJECT_TYPE_SPELLCASTER)
+            AddUse();
+    }
     else
         CastSpell(user, spellId);
 }
@@ -2146,7 +2147,32 @@ void GameObject::SendCustomAnim(uint32 anim)
     SendMessageToSet(&data, true);
 }
 
-bool GameObject::IsInRange(float x, float y, float z, float radius) const
+bool GameObject::IsInRange2d(float x, float y, float radius) const
+{
+    GameObjectDisplayInfoEntry const* info = sGameObjectDisplayInfoStore.LookupEntry(m_goInfo->displayId);
+    if (!info)
+        return IsWithinDist2d(x, y, radius);
+
+    float sinA = std::sin(GetOrientation());
+    float cosA = cos(GetOrientation());
+    float dx = x - GetPositionX();
+    float dy = y - GetPositionY();
+    float dist = std::sqrt(dx * dx + dy * dy);
+    //! Check if the distance between the 2 objects is 0, can happen if both objects are on the same position.
+    //! The code below this check wont crash if dist is 0 because 0/0 in float operations is valid, and returns infinite
+    if (G3D::fuzzyEq(dist, 0.0f))
+        return true;
+
+    float scale = GetObjectScale();
+    float sinB = dx / dist;
+    float cosB = dy / dist;
+    dx = dist * (cosA * cosB + sinA * sinB);
+    dy = dist * (cosA * sinB - sinA * cosB);
+    return dx < (info->maxX * scale) + radius && dx >(info->minX * scale) - radius
+        && dy < (info->maxY * scale) + radius && dy >(info->minY * scale) - radius;
+}
+
+bool GameObject::IsInRange3d(float x, float y, float z, float radius) const
 {
     GameObjectDisplayInfoEntry const* info = sGameObjectDisplayInfoStore.LookupEntry(m_goInfo->displayId);
     if (!info)
@@ -2171,15 +2197,6 @@ bool GameObject::IsInRange(float x, float y, float z, float radius) const
     return dx < (info->maxX * scale) + radius && dx > (info->minX * scale) - radius
            && dy < (info->maxY * scale) + radius && dy > (info->minY * scale) - radius
            && dz < (info->maxZ * scale) + radius && dz > (info->minZ * scale) - radius;
-}
-
-void GameObject::SendMessageToSetInRange(WorldPacket const* data, float dist, bool /*self*/, bool includeMargin, Player const* skipped_rcvr) const
-{
-    dist += GetObjectSize();
-    if (includeMargin)
-        dist += VISIBILITY_COMPENSATION * 2.0f; // pussywizard: to ensure everyone receives all important packets
-    Acore::MessageDistDeliverer notifier(this, data, dist, false, skipped_rcvr);
-    Cell::VisitWorldObjects(this, notifier, dist);
 }
 
 void GameObject::EventInform(uint32 eventId)
@@ -2223,24 +2240,27 @@ void GameObject::UpdatePackedRotation()
     static const int32 PACK_X = PACK_YZ << 1;
     static const int32 PACK_YZ_MASK = (PACK_YZ << 1) - 1;
     static const int32 PACK_X_MASK = (PACK_X << 1) - 1;
-    int8 w_sign = (m_localRotation.w >= 0.f ? 1 : -1);
-    int64 x = int32(m_localRotation.x * PACK_X)  * w_sign & PACK_X_MASK;
-    int64 y = int32(m_localRotation.y * PACK_YZ) * w_sign & PACK_YZ_MASK;
-    int64 z = int32(m_localRotation.z * PACK_YZ) * w_sign & PACK_YZ_MASK;
+    int8 w_sign = (WorldRotation.w >= 0.f ? 1 : -1);
+    int64 x = int32(WorldRotation.x * PACK_X)  * w_sign & PACK_X_MASK;
+    int64 y = int32(WorldRotation.y * PACK_YZ) * w_sign & PACK_YZ_MASK;
+    int64 z = int32(WorldRotation.z * PACK_YZ) * w_sign & PACK_YZ_MASK;
     m_packedRotation = z | (y << 21) | (x << 42);
 }
 
-void GameObject::SetLocalRotation(G3D::Quat const& rot)
+bool GameObject::IsWithinSightRange(Position const& pos, float dist) const
 {
-    G3D::Quat rotation;
-    // Temporary solution for gameobjects that have no rotation data in DB:
-    if (G3D::fuzzyEq(rot.z, 0.f) && G3D::fuzzyEq(rot.w, 0.f))
-        rotation = G3D::Quat::fromAxisAngleRotation(G3D::Vector3::unitZ(), GetOrientation());
-    else
-        rotation = rot;
+    return IsInRange2d(pos.GetPositionX(), pos.GetPositionY(), dist);
+}
 
+void GameObject::SetWorldRotation(G3D::Quat const& rot)
+{
+    G3D::Quat rotation = rot;
+    // If the quaternion is zero (e.g. dynamically spawned GOs with no rotation),
+    // fall back to computing rotation from orientation to avoid NaN from unitize()
+    if (G3D::fuzzyEq(rotation.magnitude(), 0.0f))
+        rotation = G3D::Quat::fromAxisAngleRotation(G3D::Vector3::unitZ(), GetOrientation());
     rotation.unitize();
-    m_localRotation = rotation;
+    WorldRotation = rotation;
     UpdatePackedRotation();
 }
 
@@ -2252,26 +2272,26 @@ void GameObject::SetTransportPathRotation(float qx, float qy, float qz, float qw
     SetFloatValue(GAMEOBJECT_PARENTROTATION + 3, qw);
 }
 
-void GameObject::SetLocalRotationAngles(float z_rot, float y_rot, float x_rot)
+void GameObject::SetWorldRotationAngles(float z_rot, float y_rot, float x_rot)
 {
-    SetLocalRotation(G3D::Quat(G3D::Matrix3::fromEulerAnglesZYX(z_rot, y_rot, x_rot)));
+    SetWorldRotation(G3D::Quat(G3D::Matrix3::fromEulerAnglesZYX(z_rot, y_rot, x_rot)));
 }
 
-G3D::Quat GameObject::GetWorldRotation() const
+G3D::Quat GameObject::GetFinalWorldRotation() const
 {
-    G3D::Quat localRotation = GetLocalRotation();
+    G3D::Quat worldRotation = GetWorldRotation();
     if (Transport* transport = GetTransport())
     {
-        G3D::Quat worldRotation = transport->GetWorldRotation();
+        G3D::Quat transportRotation = transport->GetWorldRotation();
 
+        G3D::Quat transportRotationQuat(transportRotation.x, transportRotation.y, transportRotation.z, transportRotation.w);
         G3D::Quat worldRotationQuat(worldRotation.x, worldRotation.y, worldRotation.z, worldRotation.w);
-        G3D::Quat localRotationQuat(localRotation.x, localRotation.y, localRotation.z, localRotation.w);
 
-        G3D::Quat resultRotation = localRotationQuat * worldRotationQuat;
+        G3D::Quat resultRotation = worldRotationQuat * transportRotationQuat;
 
         return G3D::Quat(resultRotation.x, resultRotation.y, resultRotation.z, resultRotation.w);
     }
-    return localRotation;
+    return worldRotation;
 }
 
 void GameObject::ModifyHealth(int32 change, Unit* attackerOrHealer /*= nullptr*/, uint32 spellId /*= 0*/)
@@ -2319,7 +2339,7 @@ void GameObject::ModifyHealth(int32 change, Unit* attackerOrHealer /*= nullptr*/
         data << uint32(-change);                    // change  < 0 triggers SPELL_BUILDING_HEAL combat log event
         // change >= 0 triggers SPELL_BUILDING_DAMAGE event
         data << uint32(spellId);
-        player->GetSession()->SendPacket(&data);
+        player->SendDirectMessage(&data);
     }
 
     GameObjectDestructibleState newState = GetDestructibleState();
@@ -2610,7 +2630,7 @@ void GameObject::EnableCollision(bool enable)
         GetMap()->InsertGameObjectModel(*m_model);*/
 
     uint32 phaseMask = 0;
-    if (enable && !DisableMgr::IsDisabledFor(DISABLE_TYPE_GO_LOS, GetEntry(), nullptr))
+    if (enable && !sDisableMgr->IsDisabledFor(DISABLE_TYPE_GO_LOS, GetEntry(), nullptr))
         phaseMask = GetPhaseMask();
 
     m_model->enable(phaseMask);
@@ -2991,10 +3011,10 @@ bool GameObject::IsAtInteractDistance(Position const& pos, float radius) const
         float maxY = displayInfo->maxY * scale + radius;
         float maxZ = displayInfo->maxZ * scale + radius;
 
-        G3D::Quat worldRotation = GetWorldRotation();
-        G3D::Quat worldRotationQuat(worldRotation.x, worldRotation.y, worldRotation.z, worldRotation.w);
+        G3D::Quat finalRotation = GetFinalWorldRotation();
+        G3D::Quat finalRotationQuat(finalRotation.x, finalRotation.y, finalRotation.z, finalRotation.w);
 
-        return G3D::CoordinateFrame {{worldRotationQuat}, {GetPositionX(), GetPositionY(), GetPositionZ()}}.toWorldSpace(G3D::Box {{minX, minY, minZ}, {maxX, maxY, maxZ}}).contains({pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ()});
+        return G3D::CoordinateFrame {{finalRotationQuat}, {GetPositionX(), GetPositionY(), GetPositionZ()}}.toWorldSpace(G3D::Box {{minX, minY, minZ}, {maxX, maxY, maxZ}}).contains({pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ()});
     }
 
     return GetExactDist(&pos) <= radius;
@@ -3065,13 +3085,13 @@ SpellInfo const* GameObject::GetSpellForLock(Player const* player) const
     return nullptr;
 }
 
-void GameObject::AddToSkillupList(ObjectGuid playerGuid)
+void GameObject::AddToSkillupList(ObjectGuid const& playerGuid)
 {
     int32 timer = GetMap()->IsDungeon() ? -1 : 10 * MINUTE * IN_MILLISECONDS;
     m_SkillupList[playerGuid] = timer;
 }
 
-bool GameObject::IsInSkillupList(ObjectGuid playerGuid) const
+bool GameObject::IsInSkillupList(ObjectGuid const& playerGuid) const
 {
     for (auto const& itr : m_SkillupList)
     {
@@ -3090,4 +3110,22 @@ std::string GameObject::GetDebugInfo() const
     sstr << WorldObject::GetDebugInfo() << "\n"
         << "SpawnId: " << GetSpawnId() << " GoState: " << std::to_string(GetGoState()) << " ScriptId: " << GetScriptId() << " AIName: " << GetAIName();
     return sstr.str();
+}
+
+// Note: This is called in a tight (heavy) loop, is it critical that all checks are FAST and are hopefully only simple conditionals.
+bool GameObject::IsUpdateNeeded()
+{
+    if (WorldObject::IsUpdateNeeded())
+        return true;
+
+    if (GetMap()->isCellMarked(GetCurrentCell().GetCellCoord().GetId()))
+        return true;
+
+    if (!GetObjectVisibilityContainer().GetVisiblePlayersMap().empty())
+        return true;
+
+    if (IsTransport())
+        return true;
+
+    return false;
 }

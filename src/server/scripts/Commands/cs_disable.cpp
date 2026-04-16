@@ -1,35 +1,26 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-/* ScriptData
-Name: disable_commandscript
-%Complete: 100
-Comment: All disable related commands
-Category: commandscripts
-EndScriptData */
-
-#include "AchievementMgr.h"
 #include "Chat.h"
 #include "CommandScript.h"
 #include "DisableMgr.h"
 #include "Language.h"
 #include "ObjectMgr.h"
 #include "OutdoorPvP.h"
-#include "Player.h"
 #include "SpellMgr.h"
 
 using namespace Acore::ChatCommands;
@@ -148,7 +139,7 @@ public:
         PreparedQueryResult result = WorldDatabase.Query(stmt);
         if (result)
         {
-            handler->SendErrorMessage("This %s (Id: %u) is already disabled.", disableTypeStr.c_str(), entry);
+            handler->SendErrorMessage("This {} (Id: {}) is already disabled.", disableTypeStr, entry);
             return false;
         }
 
@@ -159,7 +150,7 @@ public:
         stmt->SetData(3, disableComment);
         WorldDatabase.Execute(stmt);
 
-        handler->PSendSysMessage("Add Disabled %s (Id: %u) for reason %s", disableTypeStr.c_str(), entry, disableComment.c_str());
+        handler->PSendSysMessage("Add Disabled {} (Id: {}) for reason {}", disableTypeStr, entry, disableComment);
         return true;
     }
 
@@ -235,7 +226,7 @@ public:
         PreparedQueryResult result = WorldDatabase.Query(stmt);
         if (!result)
         {
-            handler->SendErrorMessage("This %s (Id: %u) is not disabled.", disableTypeStr.c_str(), entry);
+            handler->SendErrorMessage("This {} (Id: {}) is not disabled.", disableTypeStr, entry);
             return false;
         }
 
@@ -244,7 +235,7 @@ public:
         stmt->SetData(1, disableType);
         WorldDatabase.Execute(stmt);
 
-        handler->PSendSysMessage("Remove Disabled %s (Id: %u)", disableTypeStr.c_str(), entry);
+        handler->PSendSysMessage("Remove Disabled {} (Id: {})", disableTypeStr, entry);
         return true;
     }
 

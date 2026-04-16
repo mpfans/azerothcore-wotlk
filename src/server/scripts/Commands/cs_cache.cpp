@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -65,8 +65,8 @@ public:
             return false;
         }
 
-        handler->PSendSysMessage(LANG_COMMAND_CACHE_INFO, cache->Name, cache->Guid.GetCounter(), cache->AccountId,
-            cache->Class, cache->Race, cache->Sex, cache->Level, cache->MailCount, cache->GuildId, cache->GroupGuid.GetCounter(),
+        handler->PSendSysMessage(LANG_COMMAND_CACHE_INFO, cache->Name, cache->Guid.ToString(), cache->AccountId,
+            cache->Class, cache->Race, cache->Sex, cache->Level, cache->MailCount, cache->GuildId, cache->GroupGuid.ToString(),
             cache->ArenaTeamId[ARENA_SLOT_2v2], cache->ArenaTeamId[ARENA_SLOT_3v3], cache->ArenaTeamId[ARENA_SLOT_5v5]);
 
         handler->SetSentErrorMessage(false);
@@ -87,7 +87,7 @@ public:
         }
 
         sCharacterCache->DeleteCharacterCacheEntry(player->GetGUID(), player->GetName());
-        handler->PSendSysMessage(LANG_COMMAND_CACHE_DELETE, player->GetName(), player->GetGUID().GetCounter());
+        handler->PSendSysMessage(LANG_COMMAND_CACHE_DELETE, player->GetName(), player->GetGUID().ToString());
         handler->SetSentErrorMessage(false);
         return true;
     }
@@ -141,7 +141,7 @@ public:
             sCharacterCache->RefreshCacheEntry(player->GetGUID().GetCounter());
         }
 
-        handler->PSendSysMessage(LANG_COMMAND_CACHE_REFRESH, player->GetName(), player->GetGUID().GetCounter());
+        handler->PSendSysMessage(LANG_COMMAND_CACHE_REFRESH, player->GetName(), player->GetGUID().ToString());
         handler->SetSentErrorMessage(false);
         return true;
     }

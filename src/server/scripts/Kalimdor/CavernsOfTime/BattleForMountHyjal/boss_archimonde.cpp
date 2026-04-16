@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -16,9 +16,10 @@
  */
 
 #include "CreatureScript.h"
+#include "GridNotifiers.h"
 #include "Player.h"
 #include "ScriptedCreature.h"
-#include "SpellAuras.h"
+#include "SpellAuraEffects.h"
 #include "SpellScript.h"
 #include "SpellScriptLoader.h"
 #include "hyjal.h"
@@ -51,6 +52,7 @@ enum ArchiSpells
     SPELL_DOOMFIRE_STRIKE       = 31903,    //summons two creatures
     SPELL_DOOMFIRE_SPAWN        = 32074,
     SPELL_DOOMFIRE              = 31945,
+    SPELL_DOOMFIRE_DOT          = 31969,
     SPELL_SOUL_CHARGE_YELLOW    = 32045,
     SPELL_SOUL_CHARGE_GREEN     = 32051,
     SPELL_SOUL_CHARGE_RED       = 32052,
@@ -143,32 +145,35 @@ struct npc_doomfire_spirit : public ScriptedAI
 {
     npc_doomfire_spirit(Creature* creature) : ScriptedAI(creature){ }
 
-    float const turnConstant = 0.785402f;
-    float fAngle = urand(0, M_PI * 2);
+    float const turnConstant = 0.785402f; // 45 degree turns, verified with sniffs
 
     void Reset() override
     {
-        scheduler.CancelAll();
-        ScheduleTimedEvent(0s, [&] {
-            float nextOrientation = Position::NormalizeOrientation(me->GetOrientation() + irand(-1, 1) * turnConstant);
-            Position pos = GetFirstRandomAngleCollisionPosition(8.f, nextOrientation); // both orientation and distance verified with sniffs
-            me->NearTeleportTo(pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ(), nextOrientation);
-            }, 1600ms);
+        ScheduleUniqueTimedEvent(10ms, [&] {
+            TryTeleportInDirection(1.f, M_PI, 1.f, true); //turns around and teleports 1 unit on spawn, assuming same logic as later teleports applies
 
-        fAngle = urand(0, M_PI * 2);
+            ScheduleTimedEvent(10ms, [&] {
+                float angle = irand(-1, 1) * turnConstant;
+                TryTeleportInDirection(8.f, angle, 2.f, false);
+            }, 1600ms);
+        },1);
     }
 
-    Position GetFirstRandomAngleCollisionPosition(float dist, float angle)
+    void TryTeleportInDirection(float dist, float angle, float step, bool alwaysturn)
     {
         Position pos;
-        for (uint32 i = 0; i < 10; ++i)
+        while (dist >= 0)
         {
             pos = me->WorldObject::GetFirstCollisionPosition(dist, angle);
-            if (me->GetDistance(pos) > dist * 0.8f) // if at least 80% distance, good enough
+            if (fabsf(dist - me->GetExactDist2d(pos)) < 0.001) // Account for small deviation
                 break;
-            angle += (M_PI / 5); // else try slightly different angle
+            dist -= step; // Distance drops with each unsuccessful attempt
         }
-        return pos;
+
+        if (dist || alwaysturn)
+            me->NearTeleportTo(pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ(), Position::NormalizeOrientation(me->GetOrientation() + angle));
+        else // Orientation does not change if not moving, verified with sniffs
+            me->NearTeleportTo(pos.GetPositionX(), pos.GetPositionY(), pos.GetPositionZ(), me->GetOrientation());
     }
 
     void UpdateAI(uint32 diff) override
@@ -181,10 +186,6 @@ struct boss_archimonde : public BossAI
 {
     boss_archimonde(Creature* creature) : BossAI(creature, DATA_ARCHIMONDE)
     {
-        scheduler.SetValidator([&]
-        {
-            return !me->HasUnitState(UNIT_STATE_CASTING);
-        });
     }
 
     void Reset() override
@@ -210,7 +211,7 @@ struct boss_archimonde : public BossAI
             scheduler.CancelAll();
             me->SetReactState(REACT_PASSIVE);
             DoCastAOE(SPELL_PROTECTION_OF_ELUNE, true);
-            Talk(SAY_ENRAGE);
+            Talk(SAY_DEATH);
             _enraged = true;
             me->GetMotionMaster()->Clear(false);
             me->GetMotionMaster()->MoveIdle();
@@ -262,14 +263,16 @@ struct boss_archimonde : public BossAI
         Talk(SAY_AGGRO);
         ScheduleTimedEvent(25s, 35s, [&]
         {
-            scheduler.DelayGroup(GROUP_FEAR, 5s);
-            Talk(SAY_AIR_BURST);
-            DoCastRandomTarget(SPELL_AIR_BURST);
+            if (DoCastRandomTarget(SPELL_AIR_BURST, 1) == SPELL_CAST_OK)
+            {
+                scheduler.DelayGroup(GROUP_FEAR, 5s);
+                Talk(SAY_AIR_BURST);
+            }
         }, 25s, 40s);
-        ScheduleTimedEvent(25s, 35s, [&]
+        ScheduleTimedEvent(8s, [&]
         {
             DoCastDoomFire();
-        }, 20s);
+        }, 8s);
         ScheduleTimedEvent(25s, 35s, [&]
         {
             DoCastRandomTarget(SPELL_GRIP_OF_THE_LEGION);
@@ -290,7 +293,7 @@ struct boss_archimonde : public BossAI
                 }
             }
         }, 5s);
-        ScheduleTimedEvent(5000ms, [&]
+        ScheduleTimedEvent(5s, [&]
         {
             bool noPlayersInRange = true;
             if (Map* map = me->GetMap())
@@ -328,7 +331,7 @@ struct boss_archimonde : public BossAI
         Talk(SAY_SLAY);
     }
 
-    void SetGUID(ObjectGuid guid, int32 type) override
+    void SetGUID(ObjectGuid const& guid, int32 type) override
     {
         if (type == GUID_GAIN_SOUL_CHARGE_PLAYER)
         {
@@ -336,13 +339,13 @@ struct boss_archimonde : public BossAI
             {
                 switch (player->getClass())
                 {
-                    case CLASS_PALADIN:
+                    case CLASS_MAGE:
                     case CLASS_PRIEST:
                     case CLASS_WARLOCK:
                         player->CastSpell(me, SPELL_SOUL_CHARGE_RED, true);
                         break;
                     case CLASS_DEATH_KNIGHT:
-                    case CLASS_MAGE:
+                    case CLASS_PALADIN:
                     case CLASS_ROGUE:
                     case CLASS_WARRIOR:
                         player->CastSpell(me, SPELL_SOUL_CHARGE_YELLOW, true);
@@ -398,7 +401,7 @@ struct boss_archimonde : public BossAI
         float angle = 2 * M_PI * rand() / RAND_MAX;
         float x = me->GetPositionX() + DOOMFIRE_OFFSET * cos(angle);
         float y = me->GetPositionY() + DOOMFIRE_OFFSET * sin(angle);
-        Position spiritPosition = Position(x, y, me->GetPositionZ());
+        Position spiritPosition = Position(x, y, me->GetPositionZ(), Position::NormalizeOrientation(angle + M_PI)); //spirit faces archimonde on spawn
         Position doomfirePosition = Position(x, y, me->GetPositionZ());
         if (Creature* doomfireSpirit = me->SummonCreature(CREATURE_DOOMFIRE_SPIRIT, spiritPosition, TEMPSUMMON_TIMED_DESPAWN, 27000))
         {
@@ -466,30 +469,38 @@ class spell_red_sky_effect : public SpellScript
     }
 };
 
-class spell_air_burst : public SpellScript
+class spell_doomfire : public AuraScript
 {
-    PrepareSpellScript(spell_air_burst);
+    PrepareAuraScript(spell_doomfire);
 
-    void FilterTargets(std::list<WorldObject*>& targets)
+    bool Validate(SpellInfo const* /*spellInfo*/) override
     {
-        if (Unit* victim = GetCaster()->GetVictim())
-        {
-            targets.remove_if(Acore::ObjectGUIDCheck(victim->GetGUID(), true));
-        }
+        return ValidateSpellInfo({ SPELL_DOOMFIRE_DOT });
+    }
+
+    void PeriodicTick(AuraEffect const* aurEff)
+    {
+        Unit* target = GetTarget();
+        if (!target)
+            return;
+
+        int32 bp = GetSpellInfo()->Effects[EFFECT_1].CalcValue();
+        float tickCoef = (static_cast<float>(aurEff->GetTickNumber() - 1) / aurEff->GetTotalTicks()); // Tick moved back to ensure proper damage on each tick
+        int32 damage = bp - (bp*tickCoef);
+        target->CastCustomSpell(target, SPELL_DOOMFIRE_DOT, &damage, &damage, &damage, true, nullptr, nullptr, target->GetGUID());
     }
 
     void Register() override
     {
-        OnObjectAreaTargetSelect += SpellObjectAreaTargetSelectFn(spell_air_burst::FilterTargets, EFFECT_ALL, TARGET_UNIT_DEST_AREA_ENEMY);
+        OnEffectPeriodic += AuraEffectPeriodicFn(spell_doomfire::PeriodicTick, EFFECT_ALL, SPELL_AURA_PERIODIC_TRIGGER_SPELL);
     }
 };
 
 void AddSC_boss_archimonde()
 {
     RegisterSpellScript(spell_red_sky_effect);
-    RegisterSpellScript(spell_air_burst);
+    RegisterSpellScript(spell_doomfire);
     RegisterHyjalAI(boss_archimonde);
     RegisterHyjalAI(npc_ancient_wisp);
     RegisterHyjalAI(npc_doomfire_spirit);
 }
-

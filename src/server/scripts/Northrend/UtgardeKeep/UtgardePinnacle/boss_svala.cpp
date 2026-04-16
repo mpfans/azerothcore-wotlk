@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -47,8 +47,7 @@ enum Misc
     SPELL_BALL_OF_FLAME                     = 48246,
     SPELL_RITUAL_OF_THE_SWORD               = 48276,
     SPELL_RITUAL_STRIKE                     = 48331,
-    SPELL_SINSTER_STRIKE_N                  = 15667,
-    SPELL_SINSTER_STRIKE_H                  = 59409,
+    SPELL_SINISTER_STRIKE                  = 15667,
     EQUIP_SWORD                             = 40343,
 
     // CHANNELERS
@@ -157,7 +156,7 @@ public:
             me->SetImmuneToAll(true);
             Started = true;
             me->setActive(true);
-            events2.ScheduleEvent(EVENT_SVALA_START, 5000);
+            events2.ScheduleEvent(EVENT_SVALA_START, 5s);
             if (Creature* pArthas = me->SummonCreature(NPC_ARTHAS, 295.81f, -366.16f, 92.57f, 1.58f, TEMPSUMMON_TIMED_OR_CORPSE_DESPAWN, 59000))
                 ArthasGUID = pArthas->GetGUID();
 
@@ -193,7 +192,7 @@ public:
         {
             summons.DespawnAll();
             Talk(SAY_DEATH);
-            if(instance)
+            if (instance)
                 instance->SetData(DATA_SVALA_SORROWGRAVE, DONE);
         }
 
@@ -205,7 +204,7 @@ public:
                 instance->DoUpdateAchievementCriteria(ACHIEVEMENT_CRITERIA_TYPE_KILL_CREATURE, 26555, 1, nullptr);
             }
 
-            if (victim->GetTypeId() == TYPEID_PLAYER)
+            if (victim->IsPlayer())
                 Talk(SAY_SLAY);
         }
 
@@ -303,7 +302,7 @@ public:
             switch (events.ExecuteEvent())
             {
                 case EVENT_SORROWGRAVE_SS:
-                    me->CastSpell(me->GetVictim(), IsHeroic() ? SPELL_SINSTER_STRIKE_H : SPELL_SINSTER_STRIKE_N, false);
+                    me->CastSpell(me->GetVictim(), SPELL_SINISTER_STRIKE, false);
                     events.ScheduleEvent(EVENT_SORROWGRAVE_SS, 3s, 5s);
                     break;
                 case EVENT_SORROWGRAVE_FLAMES:
@@ -337,12 +336,9 @@ public:
                         DoTeleportPlayer(target, 296.632f, -346.075f, 90.63f, 4.6f);
                         me->NearTeleportTo(296.632f, -346.075f, 110.0f, 4.6f, false);
                         me->SetControlled(true, UNIT_STATE_ROOT);
-                        me->RemoveAurasByType(SPELL_AURA_PERIODIC_DAMAGE);
-                        me->RemoveAurasByType(SPELL_AURA_PERIODIC_DAMAGE_PERCENT);
-                        me->SetUnitFlag(UNIT_FLAG_NON_ATTACKABLE);
                     }
 
-                    events.DelayEvents(25001); // +1 just to be sure
+                    events.DelayEvents(25001ms); // +1 just to be sure
                     events.ScheduleEvent(EVENT_SORROWGRAVE_RITUAL_SPELLS, 0ms);
                     events.ScheduleEvent(EVENT_SORROWGRAVE_FINISH_RITUAL, 25s);
                     return;
@@ -404,7 +400,7 @@ class spell_svala_ritual_strike : public SpellScript
     {
         if (Unit* unitTarget = GetHitUnit())
         {
-            if (unitTarget->GetTypeId() != TYPEID_UNIT)
+            if (!unitTarget->IsCreature())
                 return;
 
             Unit::DealDamage(GetCaster(), unitTarget, 7000, nullptr, DIRECT_DAMAGE);
@@ -439,4 +435,3 @@ void AddSC_boss_svala()
     new npc_ritual_channeler();
     RegisterSpellAndAuraScriptPair(spell_svala_ritual_strike, spell_svala_ritual_strike_aura);
 }
-

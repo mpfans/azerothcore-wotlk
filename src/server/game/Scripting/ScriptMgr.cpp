@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -19,7 +19,6 @@
 #include "AllScriptsObjects.h"
 #include "InstanceScript.h"
 #include "LFGScripts.h"
-#include "ScriptObject.h"
 #include "ScriptSystem.h"
 #include "SmartAI.h"
 #include "SpellMgr.h"
@@ -83,6 +82,7 @@ void ScriptMgr::Initialize()
     ScriptRegistry<ArenaScript>::InitEnabledHooksIfNeeded(ARENAHOOK_END);
     ScriptRegistry<ArenaTeamScript>::InitEnabledHooksIfNeeded(ARENATEAMHOOK_END);
     ScriptRegistry<AuctionHouseScript>::InitEnabledHooksIfNeeded(AUCTIONHOUSEHOOK_END);
+    ScriptRegistry<BattlefieldScript>::InitEnabledHooksIfNeeded(BATTLEFIELDHOOK_END);
     ScriptRegistry<BGScript>::InitEnabledHooksIfNeeded(ALLBATTLEGROUNDHOOK_END);
     ScriptRegistry<CommandSC>::InitEnabledHooksIfNeeded(ALLCOMMANDHOOK_END);
     ScriptRegistry<DatabaseScript>::InitEnabledHooksIfNeeded(DATABASEHOOK_END);
@@ -99,9 +99,11 @@ void ScriptMgr::Initialize()
     ScriptRegistry<PlayerScript>::InitEnabledHooksIfNeeded(PLAYERHOOK_END);
     ScriptRegistry<ServerScript>::InitEnabledHooksIfNeeded(SERVERHOOK_END);
     ScriptRegistry<SpellSC>::InitEnabledHooksIfNeeded(ALLSPELLHOOK_END);
+    ScriptRegistry<TicketScript>::InitEnabledHooksIfNeeded(TICKETHOOK_END);
     ScriptRegistry<UnitScript>::InitEnabledHooksIfNeeded(UNITHOOK_END);
     ScriptRegistry<WorldObjectScript>::InitEnabledHooksIfNeeded(WORLDOBJECTHOOK_END);
     ScriptRegistry<WorldScript>::InitEnabledHooksIfNeeded(WORLDHOOK_END);
+    ScriptRegistry<AllMapScript>::InitEnabledHooksIfNeeded(ALLMAPHOOK_END);
 }
 
 void ScriptMgr::Unload()
@@ -126,7 +128,7 @@ void ScriptMgr::Unload()
     SCR_CLEAR<CreatureScript>();
     SCR_CLEAR<DatabaseScript>();
     SCR_CLEAR<DynamicObjectScript>();
-    SCR_CLEAR<ElunaScript>();
+    SCR_CLEAR<ALEScript>();
     SCR_CLEAR<FormulaScript>();
     SCR_CLEAR<GameEventScript>();
     SCR_CLEAR<GameObjectScript>();
@@ -145,6 +147,7 @@ void ScriptMgr::Unload()
     SCR_CLEAR<ServerScript>();
     SCR_CLEAR<SpellSC>();
     SCR_CLEAR<SpellScriptLoader>();
+    SCR_CLEAR<TicketScript>();
     SCR_CLEAR<TransportScript>();
     SCR_CLEAR<UnitScript>();
     SCR_CLEAR<VehicleScript>();
@@ -224,7 +227,8 @@ void ScriptMgr::CheckIfScriptsInDatabaseExist()
                 !ScriptRegistry<CommandSC>::GetScriptById(sid) &&
                 !ScriptRegistry<ArenaScript>::GetScriptById(sid) &&
                 !ScriptRegistry<GroupScript>::GetScriptById(sid) &&
-                !ScriptRegistry<DatabaseScript>::GetScriptById(sid))
+                !ScriptRegistry<DatabaseScript>::GetScriptById(sid) &&
+                !ScriptRegistry<TicketScript>::GetScriptById(sid))
                 {
                     LOG_ERROR("sql.sql", "Script named '{}' is assigned in the database, but has no code!", scriptName);
                 }

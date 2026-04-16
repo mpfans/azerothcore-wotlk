@@ -1,26 +1,19 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
-
-/* ScriptData
-Name: tele_commandscript
-%Complete: 100
-Comment: All tele related commands
-Category: commandscripts
-EndScriptData */
 
 #include "Chat.h"
 #include "CommandScript.h"
@@ -72,7 +65,7 @@ public:
         if (!player)
             return false;
 
-        if (sObjectMgr->GetGameTele(name))
+        if (sObjectMgr->GetGameTele(name, true))
         {
             handler->SendErrorMessage(LANG_COMMAND_TP_ALREADYEXIST);
             return false;
@@ -134,9 +127,9 @@ public:
                 return false;
             }
 
-            handler->PSendSysMessage(LANG_TELEPORTING_TO, chrNameLink.c_str(), "", locationName.c_str());
+            handler->PSendSysMessage(LANG_TELEPORTING_TO, chrNameLink, "", locationName);
             if (handler->needReportToTarget(target))
-                ChatHandler(target->GetSession()).PSendSysMessage(LANG_TELEPORTED_TO_BY, handler->GetNameLink().c_str());
+                ChatHandler(target->GetSession()).PSendSysMessage(LANG_TELEPORTED_TO_BY, handler->GetNameLink());
 
             // stop flight if need
             if (target->IsInFlight())
@@ -157,7 +150,7 @@ public:
 
             std::string nameLink = handler->playerLink(player.GetName());
 
-            handler->PSendSysMessage(LANG_TELEPORTING_TO, nameLink.c_str(), handler->GetAcoreString(LANG_OFFLINE), locationName.c_str());
+            handler->PSendSysMessage(LANG_TELEPORTING_TO, nameLink, handler->GetAcoreString(LANG_OFFLINE), locationName);
 
             Player::SavePositionInDB({ mapId, pos }, sMapMgr->GetZoneId(PHASEMASK_NORMAL, { mapId, pos }), player.GetGUID(), nullptr);
         }
@@ -252,13 +245,13 @@ public:
 
             if (player->IsBeingTeleported())
             {
-                handler->PSendSysMessage(LANG_IS_TELEPORTED, plNameLink.c_str());
+                handler->PSendSysMessage(LANG_IS_TELEPORTED, plNameLink);
                 continue;
             }
 
-            handler->PSendSysMessage(LANG_TELEPORTING_TO, plNameLink.c_str(), "", tele->name.c_str());
+            handler->PSendSysMessage(LANG_TELEPORTING_TO, plNameLink.c_str(), "", tele->name);
             if (handler->needReportToTarget(player))
-                ChatHandler(player->GetSession()).PSendSysMessage(LANG_TELEPORTED_TO_BY, nameLink.c_str());
+                ChatHandler(player->GetSession()).PSendSysMessage(LANG_TELEPORTED_TO_BY, nameLink);
 
             // stop flight if need
             if (target->IsInFlight())

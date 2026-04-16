@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -79,7 +79,7 @@ public:
                     itemCount = *Acore::StringTo<uint32>(itemTokens.at(1));
                     break;
                 default:
-                    handler->SendSysMessage(Acore::StringFormatFmt("> Incorrect item list format for '{}'", itemString));
+                    handler->SendSysMessage(Acore::StringFormat("> Incorrect item list format for '{}'", itemString));
                     continue;
             }
 
@@ -133,7 +133,7 @@ public:
         draft.SendMailTo(trans, MailReceiver(target->GetConnectedPlayer(), target->GetGUID().GetCounter()), sender);
         CharacterDatabase.CommitTransaction(trans);
 
-        handler->PSendSysMessage(LANG_MAIL_SENT, handler->playerLink(target->GetName()).c_str());
+        handler->PSendSysMessage(LANG_MAIL_SENT, handler->playerLink(target->GetName()));
         return true;
     }
 
@@ -158,7 +158,7 @@ public:
         draft.SendMailTo(trans, MailReceiver(target->GetConnectedPlayer(), target->GetGUID().GetCounter()), sender);
         CharacterDatabase.CommitTransaction(trans);
 
-        handler->PSendSysMessage(LANG_MAIL_SENT, handler->playerLink(target->GetName()).c_str());
+        handler->PSendSysMessage(LANG_MAIL_SENT, handler->playerLink(target->GetName()));
         return true;
     }
 
@@ -179,11 +179,11 @@ public:
 
         /// - Send the message
         // Use SendAreaTriggerMessage for fastest delivery.
-        player->GetSession()->SendAreaTriggerMessage("%s", msg.c_str());
+        player->GetSession()->SendAreaTriggerMessage("{}", msg);
         player->GetSession()->SendAreaTriggerMessage("|cffff0000[Message from administrator]:|r");
 
         // Confirmation message
-        handler->PSendSysMessage(LANG_SENDMESSAGE, handler->playerLink(target->GetName()).c_str(), msg.c_str());
+        handler->PSendSysMessage(LANG_SENDMESSAGE, handler->playerLink(target->GetName()), msg);
 
         return true;
     }
@@ -211,7 +211,7 @@ public:
 
         CharacterDatabase.CommitTransaction(trans);
 
-        handler->PSendSysMessage(LANG_MAIL_SENT, handler->playerLink(target->GetName()).c_str());
+        handler->PSendSysMessage(LANG_MAIL_SENT, handler->playerLink(target->GetName()));
         return true;
     }
 };

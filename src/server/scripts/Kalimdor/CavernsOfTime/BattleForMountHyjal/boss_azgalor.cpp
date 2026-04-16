@@ -1,14 +1,14 @@
 /*
  * This file is part of the AzerothCore Project. See AUTHORS file for Copyright information
  *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Affero General Public License as published by the
- * Free Software Foundation; either version 3 of the License, or (at your
- * option) any later version.
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful, but WITHOUT
  * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero General Public License for
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
  * more details.
  *
  * You should have received a copy of the GNU General Public License along
@@ -16,6 +16,7 @@
  */
 
 #include "CreatureScript.h"
+#include "GridNotifiers.h"
 #include "ScriptedCreature.h"
 #include "SpellScript.h"
 #include "SpellScriptLoader.h"
@@ -46,10 +47,6 @@ public:
     boss_azgalor(Creature* creature) : BossAI(creature, DATA_AZGALOR)
     {
         _recentlySpoken = false;
-        scheduler.SetValidator([this]
-            {
-                return !me->HasUnitState(UNIT_STATE_CASTING);
-            });
     }
 
     void JustEngagedWith(Unit * who) override
@@ -60,10 +57,10 @@ public:
         {
             DoCastVictim(SPELL_CLEAVE);
             context.Repeat(8s, 16s);
-        }).Schedule(25s, [this](TaskContext context)
+        }).Schedule(20s, 25s, [this](TaskContext context)
         {
             DoCastRandomTarget(SPELL_RAIN_OF_FIRE, 0, 40.f, false);
-            context.Repeat(15s);
+            context.Repeat(12s, 35s);
         }).Schedule(30s, [this](TaskContext context)
         {
             DoCastAOE(SPELL_HOWL_OF_AZGALOR);
@@ -85,12 +82,12 @@ public:
         Talk(SAY_ONSPAWN, 1200ms);
 
         if (action == DATA_AZGALOR)
-            me->GetMotionMaster()->MovePath(HORDE_BOSS_PATH, false);
+            me->GetMotionMaster()->MoveWaypoint(HORDE_BOSS_PATH, false);
     }
 
     void KilledUnit(Unit * victim) override
     {
-        if (!_recentlySpoken && victim->IsPlayer())
+        if (!_recentlySpoken && victim->IsPlayer() && me->IsAlive())
         {
             Talk(SAY_ONSLAY);
             _recentlySpoken = true;
@@ -109,7 +106,7 @@ public:
         if (Creature* archi = instance->GetCreature(DATA_ARCHIMONDE))
         {
             archi->AI()->DoAction(ACTION_BECOME_ACTIVE_AND_CHANNEL);
-            archi->AI()->Talk(SAY_ARCHIMONDE_INTRO, 25000ms);
+            archi->AI()->Talk(SAY_ARCHIMONDE_INTRO, 25s);
         }
         BossAI::JustDied(killer);
     }
