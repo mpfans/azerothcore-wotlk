@@ -780,22 +780,16 @@ public:
         _newTargetSelectTimer = 1000;
     }
 
-    void SpellHitTarget(Unit* /*target*/, SpellInfo const* spell) override
+    void SpellHitTarget(Unit* /*target*/, SpellInfo const* /*spell*/) override
     {
-        // SpellHitTarget fires when an Effect of our cast reaches a target.
-        // For Volatile Ooze / Gas Cloud this is the moment the ooze bond
-        // (Adhesive) or Gaseous Bloat lands on the player.  The main cast
-        // (Adhesive / Gaseous Bloat) is still in CURRENT_GENERIC_SPELL at
-        // this point because Effect handlers fire before finish() — checking
-        // spell state here would falsely allow retarget.
-        //
-        // To break the infinite interrupt loop we DO NOT retarget here at
-        // all.  Retarget is owned by UpdateAI's 1-second timer (see below):
-        // when the main cast finishes naturally, UpdateAI picks a new target
-        // and CastMainSpell() restarts the cycle.  Without this rule, every
-        // spell hit re-triggers SelectNewTarget → InterruptNonMeleeSpells,
-        // restarting the cast immediately, hitting the player, repeating.
-        (void)spell;
+        // SpellHitTarget fires on every Effect hit during our channel spell.
+        // We DO NOT retarget here — that is handled by UpdateAI's timer AND by
+        // SpellScript's AfterHit (StartAttack -> SetGUID).  Retargeting here
+        // caused the infinite interrupt loop: hit -> SelectNewTarget ->
+        // InterruptNonMeleeSpells -> timer=1000 -> CastMainSpell -> hit -> ...
+        // The guard "if (!_newTargetSelectTimer)" is still needed because if
+        // SpellScript AfterHit has already called SelectNewTarget (timer>0),
+        // we must NOT start yet another retarget cycle.
     }
 
     void SpellHit(Unit* /*caster*/, SpellInfo const* spell) override
@@ -926,16 +920,12 @@ public:
     {
         npc_gas_cloudAI(Creature* creature) : npc_putricide_oozeAI(creature, SPELL_EXPUNGED_GAS)
         {
-            _newTargetSelectTimer = 0;
         }
 
         void CastMainSpell() override
         {
             me->CastCustomSpell(SPELL_GASEOUS_BLOAT, SPELLVALUE_AURA_STACK, 10, me, false);
         }
-
-    private:
-        uint32 _newTargetSelectTimer;
     };
 
     CreatureAI* GetAI(Creature* creature) const override
