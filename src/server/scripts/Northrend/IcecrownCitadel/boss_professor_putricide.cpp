@@ -834,6 +834,37 @@ public:
 
         DoMeleeAttackIfReady();
 
+        // Gas Cloud explodes on melee contact with a player carrying Gaseous Bloat
+        if (_hitTargetSpellId == SPELL_EXPUNGED_GAS)
+        {
+            if (Unit* victim = me->GetVictim())
+            {
+                uint32 gaseousBloatId = sSpellMgr->GetSpellIdForDifficulty(SPELL_GASEOUS_BLOAT, me);
+                if (victim->HasAura(gaseousBloatId) && me->IsWithinMeleeRange(victim))
+                {
+                    uint8 stacks = 0;
+                    if (Aura* bloatAura = victim->GetAura(gaseousBloatId))
+                        stacks = bloatAura->GetStackAmount();
+                    victim->RemoveAurasDueToSpell(gaseousBloatId);
+
+                    // Per-stack damage from DBC BaseDice/DieSides per difficulty:
+                    // 70672(10N) 1218+1d63, 72455(25N) 1462+1d75, 72832(10H) 1462+1d75, 72833(25H) 1949+1d101
+                    int32 base, sides;
+                    switch (gaseousBloatId)
+                    {
+                        case 70672: base = 1218; sides = 63; break;
+                        case 72455: base = 1462; sides = 75; break;
+                        case 72832: base = 1462; sides = 75; break;
+                        case 72833: base = 1949; sides = 101; break;
+                        default:    base = 1218; sides = 63; break;
+                    }
+                    int32 damage = (stacks * 5 * (base + irand(1, sides))) / 2;  // x2.5
+                    me->CastCustomSpell(SPELL_EXPUNGED_GAS, SPELLVALUE_BASE_POINT0, damage, victim, TRIGGERED_FULL_MASK);
+                    SelectNewTarget();
+                }
+            }
+        }
+
         if (!_newTargetSelectTimer)
             return;
 
