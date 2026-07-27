@@ -782,20 +782,20 @@ public:
 
     void SpellHitTarget(Unit* /*target*/, SpellInfo const* spell) override
     {
-        // Guard: if the triggered spell is still in PREPARING or CASTING state,
-        // the main spell is actively casting — don't interrupt.  Previously,
-        // SpellHitTarget fired after a triggered spell already finished
-        // (spell state == FINISHED), causing SelectNewTarget() to run every
-        // frame and resetting the 1s timer, stalling the ooze.
-        if (Spell* currentSpell = me->GetCurrentSpell(CURRENT_GENERIC_SPELL))
-        {
-            uint32 state = currentSpell->getState();
-            if (state == SPELL_STATE_PREPARING || state == SPELL_STATE_CASTING)
-                return;
-        }
-
-        if (!_newTargetSelectTimer && spell->Id == sSpellMgr->GetSpellIdForDifficulty(_hitTargetSpellId, me))
-            SelectNewTarget();
+        // SpellHitTarget fires when an Effect of our cast reaches a target.
+        // For Volatile Ooze / Gas Cloud this is the moment the ooze bond
+        // (Adhesive) or Gaseous Bloat lands on the player.  The main cast
+        // (Adhesive / Gaseous Bloat) is still in CURRENT_GENERIC_SPELL at
+        // this point because Effect handlers fire before finish() — checking
+        // spell state here would falsely allow retarget.
+        //
+        // To break the infinite interrupt loop we DO NOT retarget here at
+        // all.  Retarget is owned by UpdateAI's 1-second timer (see below):
+        // when the main cast finishes naturally, UpdateAI picks a new target
+        // and CastMainSpell() restarts the cycle.  Without this rule, every
+        // spell hit re-triggers SelectNewTarget → InterruptNonMeleeSpells,
+        // restarting the cast immediately, hitting the player, repeating.
+        (void)spell;
     }
 
     void SpellHit(Unit* /*caster*/, SpellInfo const* spell) override
@@ -806,28 +806,35 @@ public:
 
     void UpdateAI(uint32 diff) override
     {
-        if (!_newTargetSelectTimer)
+        // Initial spawn / reset: targetGUID empty → pick a target and start the
+        // 1-second pre-cast delay.  UpdateAI does NOT trigger SelectNewTarget
+        // mid-cast any more — SpellHitTarget (which used to fire on every
+        // adhesive/bloat application and restart the cast) is now a no-op so
+        // the cast has time to actually finish on its target.
+        if (!_newTargetSelectTimer && !targetGUID && !me->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+            SelectNewTarget();
+
+        // Spell just finished (or never started) AND we have a target:
+        // restart the 1-second pre-cast delay and pick the same target again.
+        // SpellHitTarget (which used to fire on every hit) is a no-op, so
+        // UpdateAI is the single source of truth for re-casting.
+        if (!_newTargetSelectTimer && targetGUID)
         {
             Spell* currentSpell = me->GetCurrentSpell(CURRENT_GENERIC_SPELL);
             uint32 spellState = currentSpell ? currentSpell->getState() : SPELL_STATE_FINISHED;
-
-            // Skip retarget while spell is actively casting (PREPARING or CASTING).
-            // This prevents the infinite loop: SpellHitTarget fires when spell is
-            // already finished → selects new target → UpdateAI sees no active spell
-            // → selects another target → repeat.  PREPARING covers instant spells
-            // (CastSpell sets it before prepare() returns).  CASTING covers cast-time
-            // spells.  FINISHED means spell done, safe to retarget.
-            if (spellState != SPELL_STATE_PREPARING && spellState != SPELL_STATE_CASTING)
+            if (spellState == SPELL_STATE_FINISHED || spellState == SPELL_STATE_DELAYED)
             {
-                if (!targetGUID)
+                Unit* target = ObjectAccessor::GetUnit(*me, targetGUID);
+                if (!target || !me->IsValidAttackTarget(target) || target->HasUnitFlag2(UNIT_FLAG2_FEIGN_DEATH)
+                    || target->GetExactDist2dSq(4356.0f, 3211.0f) > 80.0f * 80.0f
+                    || target->GetPositionZ() < 380.0f || target->GetPositionZ() > 405.0f)
                 {
                     SelectNewTarget();
                 }
                 else
                 {
-                    Unit* target = ObjectAccessor::GetUnit(*me, targetGUID);
-                    if (me->GetVictim()->GetGUID() != targetGUID || !target || !me->IsValidAttackTarget(target) || target->HasUnitFlag2(UNIT_FLAG2_FEIGN_DEATH) || target->GetExactDist2dSq(4356.0f, 3211.0f) > 80.0f * 80.0f || target->GetPositionZ() < 380.0f || target->GetPositionZ() > 405.0f)
-                        SelectNewTarget();
+                    // Same target still valid — schedule next cast after 1s.
+                    _newTargetSelectTimer = 1000;
                 }
             }
         }
