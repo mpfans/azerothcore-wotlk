@@ -782,6 +782,18 @@ public:
 
     void SpellHitTarget(Unit* /*target*/, SpellInfo const* spell) override
     {
+        // Guard: if the triggered spell is still in PREPARING or CASTING state,
+        // the main spell is actively casting — don't interrupt.  Previously,
+        // SpellHitTarget fired after a triggered spell already finished
+        // (spell state == FINISHED), causing SelectNewTarget() to run every
+        // frame and resetting the 1s timer, stalling the ooze.
+        if (Spell* currentSpell = me->GetCurrentSpell(CURRENT_GENERIC_SPELL))
+        {
+            uint32 state = currentSpell->getState();
+            if (state == SPELL_STATE_PREPARING || state == SPELL_STATE_CASTING)
+                return;
+        }
+
         if (!_newTargetSelectTimer && spell->Id == sSpellMgr->GetSpellIdForDifficulty(_hitTargetSpellId, me))
             SelectNewTarget();
     }
@@ -796,13 +808,27 @@ public:
     {
         if (!_newTargetSelectTimer)
         {
-            if ((!me->HasUnitState(UNIT_STATE_CASTING) && !me->GetVictim()) || !me->IsNonMeleeSpellCast(false, false, true, false, true))
-                SelectNewTarget();
-            else if (targetGUID)
+            Spell* currentSpell = me->GetCurrentSpell(CURRENT_GENERIC_SPELL);
+            uint32 spellState = currentSpell ? currentSpell->getState() : SPELL_STATE_FINISHED;
+
+            // Skip retarget while spell is actively casting (PREPARING or CASTING).
+            // This prevents the infinite loop: SpellHitTarget fires when spell is
+            // already finished → selects new target → UpdateAI sees no active spell
+            // → selects another target → repeat.  PREPARING covers instant spells
+            // (CastSpell sets it before prepare() returns).  CASTING covers cast-time
+            // spells.  FINISHED means spell done, safe to retarget.
+            if (spellState != SPELL_STATE_PREPARING && spellState != SPELL_STATE_CASTING)
             {
-                Unit* target = ObjectAccessor::GetUnit(*me, targetGUID);
-                if (me->GetVictim()->GetGUID() != targetGUID || !target || !me->IsValidAttackTarget(target) || target->HasUnitFlag2(UNIT_FLAG2_FEIGN_DEATH) || target->GetExactDist2dSq(4356.0f, 3211.0f) > 80.0f * 80.0f || target->GetPositionZ() < 380.0f || target->GetPositionZ() > 405.0f)
+                if (!targetGUID)
+                {
                     SelectNewTarget();
+                }
+                else
+                {
+                    Unit* target = ObjectAccessor::GetUnit(*me, targetGUID);
+                    if (me->GetVictim()->GetGUID() != targetGUID || !target || !me->IsValidAttackTarget(target) || target->HasUnitFlag2(UNIT_FLAG2_FEIGN_DEATH) || target->GetExactDist2dSq(4356.0f, 3211.0f) > 80.0f * 80.0f || target->GetPositionZ() < 380.0f || target->GetPositionZ() > 405.0f)
+                        SelectNewTarget();
+                }
             }
         }
 
