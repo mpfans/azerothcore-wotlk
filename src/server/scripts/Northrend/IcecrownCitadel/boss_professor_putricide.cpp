@@ -780,16 +780,10 @@ public:
         _newTargetSelectTimer = 1000;
     }
 
-    void SpellHitTarget(Unit* /*target*/, SpellInfo const* /*spell*/) override
+    void SpellHitTarget(Unit* /*target*/, SpellInfo const* spell) override
     {
-        // SpellHitTarget fires on every Effect hit during our channel spell.
-        // We DO NOT retarget here — that is handled by UpdateAI's timer AND by
-        // SpellScript's AfterHit (StartAttack -> SetGUID).  Retargeting here
-        // caused the infinite interrupt loop: hit -> SelectNewTarget ->
-        // InterruptNonMeleeSpells -> timer=1000 -> CastMainSpell -> hit -> ...
-        // The guard "if (!_newTargetSelectTimer)" is still needed because if
-        // SpellScript AfterHit has already called SelectNewTarget (timer>0),
-        // we must NOT start yet another retarget cycle.
+        if (!_newTargetSelectTimer && spell->Id == sSpellMgr->GetSpellIdForDifficulty(_hitTargetSpellId, me))
+            SelectNewTarget();
     }
 
     void SpellHit(Unit* /*caster*/, SpellInfo const* spell) override
@@ -800,71 +794,19 @@ public:
 
     void UpdateAI(uint32 diff) override
     {
-        // Initial spawn / reset: targetGUID empty → pick a target and start the
-        // 1-second pre-cast delay.  UpdateAI does NOT trigger SelectNewTarget
-        // mid-cast any more — SpellHitTarget (which used to fire on every
-        // adhesive/bloat application and restart the cast) is now a no-op so
-        // the cast has time to actually finish on its target.
-        if (!_newTargetSelectTimer && !targetGUID && !me->GetCurrentSpell(CURRENT_GENERIC_SPELL))
-            SelectNewTarget();
-
-        // Spell just finished (or never started) AND we have a target:
-        // restart the 1-second pre-cast delay and pick the same target again.
-        // SpellHitTarget (which used to fire on every hit) is a no-op, so
-        // UpdateAI is the single source of truth for re-casting.
-        if (!_newTargetSelectTimer && targetGUID)
+        if (!_newTargetSelectTimer)
         {
-            Spell* currentSpell = me->GetCurrentSpell(CURRENT_GENERIC_SPELL);
-            uint32 spellState = currentSpell ? currentSpell->getState() : SPELL_STATE_FINISHED;
-            if (spellState == SPELL_STATE_FINISHED || spellState == SPELL_STATE_DELAYED)
+            if ((!me->HasUnitState(UNIT_STATE_CASTING) && !me->GetVictim()) || !me->IsNonMeleeSpellCast(false, false, true, false, true))
+                SelectNewTarget();
+            else if (targetGUID)
             {
                 Unit* target = ObjectAccessor::GetUnit(*me, targetGUID);
-                if (!target || !me->IsValidAttackTarget(target) || target->HasUnitFlag2(UNIT_FLAG2_FEIGN_DEATH)
-                    || target->GetExactDist2dSq(4356.0f, 3211.0f) > 80.0f * 80.0f
-                    || target->GetPositionZ() < 380.0f || target->GetPositionZ() > 405.0f)
-                {
+                if (me->GetVictim()->GetGUID() != targetGUID || !target || !me->IsValidAttackTarget(target) || target->HasUnitFlag2(UNIT_FLAG2_FEIGN_DEATH) || target->GetExactDist2dSq(4356.0f, 3211.0f) > 80.0f * 80.0f || target->GetPositionZ() < 380.0f || target->GetPositionZ() > 405.0f)
                     SelectNewTarget();
-                }
-                else
-                {
-                    // Same target still valid — schedule next cast after 1s.
-                    _newTargetSelectTimer = 1000;
-                }
             }
         }
 
         DoMeleeAttackIfReady();
-
-        // Gas Cloud explodes on melee contact with a player carrying Gaseous Bloat
-        if (_hitTargetSpellId == SPELL_EXPUNGED_GAS)
-        {
-            if (Unit* victim = me->GetVictim())
-            {
-                uint32 gaseousBloatId = sSpellMgr->GetSpellIdForDifficulty(SPELL_GASEOUS_BLOAT, me);
-                if (victim->HasAura(gaseousBloatId) && me->IsWithinMeleeRange(victim))
-                {
-                    uint8 stacks = 0;
-                    if (Aura* bloatAura = victim->GetAura(gaseousBloatId))
-                        stacks = bloatAura->GetStackAmount();
-                    victim->RemoveAurasDueToSpell(gaseousBloatId);
-
-                    // Per-stack damage from DBC BaseDice/DieSides per difficulty:
-                    // 70672(10N) 1218+1d63, 72455(25N) 1462+1d75, 72832(10H) 1462+1d75, 72833(25H) 1949+1d101
-                    int32 base, sides;
-                    switch (gaseousBloatId)
-                    {
-                        case 70672: base = 1218; sides = 63; break;
-                        case 72455: base = 1462; sides = 75; break;
-                        case 72832: base = 1462; sides = 75; break;
-                        case 72833: base = 1949; sides = 101; break;
-                        default:    base = 1218; sides = 63; break;
-                    }
-                    int32 damage = (stacks * 5 * (base + irand(1, sides))) / 2;  // x2.5
-                    me->CastCustomSpell(SPELL_EXPUNGED_GAS, SPELLVALUE_BASE_POINT0, damage, victim, TRIGGERED_FULL_MASK);
-                    SelectNewTarget();
-                }
-            }
-        }
 
         if (!_newTargetSelectTimer)
             return;
